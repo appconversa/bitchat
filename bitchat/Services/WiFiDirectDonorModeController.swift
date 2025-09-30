@@ -14,11 +14,14 @@ final class WiFiDirectDonorModeController {
         /// The bundle identifier of the `NEPacketTunnelProvider` extension that
         /// performs actual packet forwarding. This must be declared in the host app.
         let providerBundleIdentifier: String
+        /// Optional human-readable server address exposed to the system VPN UI.
+        let serverAddress: String?
         /// Optional metadata propagated to the provider during startup.
         let options: [String: NSObject]
 
-        init(providerBundleIdentifier: String, options: [String: NSObject] = [:]) {
+        init(providerBundleIdentifier: String, serverAddress: String? = nil, options: [String: NSObject] = [:]) {
             self.providerBundleIdentifier = providerBundleIdentifier
+            self.serverAddress = serverAddress
             self.options = options
         }
     }
@@ -64,6 +67,7 @@ final class WiFiDirectDonorModeController {
                 let protocolConfiguration = NETunnelProviderProtocol()
                 protocolConfiguration.providerBundleIdentifier = configuration.providerBundleIdentifier
                 protocolConfiguration.providerConfiguration = configuration.options
+                protocolConfiguration.serverAddress = configuration.serverAddress
                 protocolConfiguration.disconnectOnSleep = false
 
                 manager.localizedDescription = "BitChat Donor Tunnel"
