@@ -347,6 +347,8 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
     let meshService: Transport
 #if os(iOS)
     private var wifiDirectBridge: WiFiDirectMeshBridge?
+    @available(iOS 15.0, *)
+    private var wifiDirectDonorController: WiFiDirectDonorModeController?
 #endif
     let identityManager: SecureIdentityStateManagerProtocol
     
@@ -399,6 +401,11 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
     @Published var showBluetoothAlert = false
     @Published var bluetoothAlertMessage = ""
     @Published var bluetoothState: CBManagerState = .unknown
+#if os(iOS)
+    @Published var wifiDirectInboundTransfers: [WiFiDirectMeshBridge.ResourceTransfer] = []
+    @Published var wifiDirectBridgeError: String?
+    @Published var donorModeStatusDescription: String = ""
+#endif
 
     // Presentation state for privacy gating
     @Published var isLocationChannelsSheetPresented: Bool = false
@@ -502,7 +509,19 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
         self.meshService = BLEService(keychain: keychain, identityManager: identityManager)
 #if os(iOS)
         if let bleTransport = self.meshService as? BLEService {
-            self.wifiDirectBridge = WiFiDirectMeshBridge(meshService: bleTransport)
+            let bridge = WiFiDirectMeshBridge(meshService: bleTransport)
+            bridge.delegate = self
+            self.wifiDirectBridge = bridge
+        }
+        if #available(iOS 15.0, *) {
+            let controller = WiFiDirectDonorModeController()
+            self.wifiDirectDonorController = controller
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleDonorModeState(_:)),
+                name: .wifiDirectDonorStateChanged,
+                object: controller
+            )
         }
 #endif
 
@@ -858,10 +877,75 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
     }
     
     // MARK: - Deinitialization
-    
+
     deinit {
         // No need to force UserDefaults synchronization
+#if os(iOS)
+        NotificationCenter.default.removeObserver(self, name: .wifiDirectDonorStateChanged, object: nil)
+#endif
     }
+
+#if os(iOS)
+    func sendWiFiDirectResource(at url: URL, name: String, mediaType: WiFiDirectMeshBridge.ResourceTransfer.MediaType) {
+        wifiDirectBridge?.sendResource(at: url, named: name, mediaType: mediaType) { [weak self] result in
+            guard let self else { return }
+            if case let .failure(error) = result {
+                DispatchQueue.main.async {
+                    self.wifiDirectBridgeError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func enableDonorMode(providerBundleIdentifier: String, options: [String: NSObject] = [:]) {
+        guard #available(iOS 15.0, *), let controller = wifiDirectDonorController else {
+            donorModeStatusDescription = NSLocalizedString("Wi‑Fi Direct donor mode requires iOS 15 or later.", comment: "Donor mode unsupported message")
+            return
+        }
+
+        donorModeStatusDescription = NSLocalizedString("Preparing donor mode…", comment: "Donor mode preparing status")
+        let configuration = WiFiDirectDonorModeController.Configuration(providerBundleIdentifier: providerBundleIdentifier, options: options)
+        controller.enable(with: configuration) { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.donorModeStatusDescription = controller.state.statusDescription
+                case .failure(let error):
+                    self.donorModeStatusDescription = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    func disableDonorMode() {
+        guard #available(iOS 15.0, *), let controller = wifiDirectDonorController else {
+            donorModeStatusDescription = NSLocalizedString("Wi‑Fi Direct donor mode requires iOS 15 or later.", comment: "Donor mode unsupported message")
+            return
+        }
+
+        donorModeStatusDescription = NSLocalizedString("Stopping donor mode…", comment: "Donor mode stopping status")
+        controller.disable { [weak self] result in
+            guard let self else { return }
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    self.donorModeStatusDescription = controller.state.statusDescription
+                case .failure(let error):
+                    self.donorModeStatusDescription = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    @objc private func handleDonorModeState(_ notification: Notification) {
+        guard #available(iOS 15.0, *),
+              let state = notification.userInfo?["state"] as? WiFiDirectDonorModeController.State else { return }
+        DispatchQueue.main.async {
+            self.donorModeStatusDescription = state.statusDescription
+        }
+    }
+#endif
 
     // MARK: - Tor notifications
     @objc private func handleTorWillStart() {
@@ -6285,3 +6369,19 @@ private func checkForMentions(_ message: BitchatMessage) {
     }
 }
 // End of ChatViewModel class
+
+#if os(iOS)
+extension ChatViewModel: WiFiDirectMeshBridgeDelegate {
+    func bridge(_ bridge: WiFiDirectMeshBridge, didReceiveResource resource: WiFiDirectMeshBridge.ResourceTransfer) {
+        DispatchQueue.main.async {
+            self.wifiDirectInboundTransfers.append(resource)
+        }
+    }
+
+    func bridge(_ bridge: WiFiDirectMeshBridge, didFailToSendResourceWith error: Error) {
+        DispatchQueue.main.async {
+            self.wifiDirectBridgeError = error.localizedDescription
+        }
+    }
+}
+#endif
