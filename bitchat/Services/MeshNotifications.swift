@@ -13,4 +13,7 @@ extension Notification.Name {
 
     /// Posted for every packet that leaves the local mesh transport.
     static let meshServiceDidBroadcastPacket = Notification.Name("chat.bitchat.mesh.didBroadcastPacket")
+
+    /// Posted whenever Wi-Fi Direct donor mode updates its lifecycle state.
+    static let wifiDirectDonorStateChanged = Notification.Name("chat.bitchat.wifidirect.donorStateChanged")
 }
