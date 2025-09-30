@@ -88,4 +88,11 @@ struct BitchatPacket: Codable {
     static func from(_ data: Data) -> BitchatPacket? {
         BinaryProtocol.decode(data)
     }
+
+    /// Stable identifier used for deduplication across heterogeneous transports.
+    var dedupIdentifier: String {
+        let sender = senderID.hexEncodedString()
+        let digestPrefix = payload.sha256Hash().prefix(4).hexEncodedString()
+        return "\(sender)-\(timestamp)-\(type)-\(digestPrefix)"
+    }
 }

@@ -422,6 +422,11 @@ final class BLEService: NSObject {
         let fingerprint = noiseService.getIdentityFingerprint()
         myPeerID = String(fingerprint.prefix(16))
         myPeerIDData = Data(hexString: myPeerID) ?? Data()
+        NotificationCenter.default.post(
+            name: .meshServiceIdentityUpdated,
+            object: self,
+            userInfo: ["peerID": myPeerID]
+        )
     }
 
     private func restartGossipManager() {
@@ -1091,11 +1096,25 @@ final class BLEService: NSObject {
             SecureLogger.error("❌ Failed to convert packet to binary data", category: .session)
             return
         }
+        notifyExternalTransports(packet: packet, data: data)
         if packet.type == MessageType.noiseEncrypted.rawValue {
             sendEncrypted(packet, data: data, pad: padForBLE)
             return
         }
         sendGenericBroadcast(packet, data: data, pad: padForBLE)
+    }
+
+    private func notifyExternalTransports(packet: BitchatPacket, data: Data) {
+        let messageID = makeMessageID(for: packet)
+        NotificationCenter.default.post(
+            name: .meshServiceDidBroadcastPacket,
+            object: self,
+            userInfo: [
+                MeshNotificationUserInfo.packet.rawValue: packet,
+                MeshNotificationUserInfo.data.rawValue: data,
+                MeshNotificationUserInfo.messageID.rawValue: messageID
+            ]
+        )
     }
 
     // MARK: - Broadcast helpers (single responsibility)
@@ -1276,7 +1295,28 @@ final class BLEService: NSObject {
     // Directed send helper (unicast to a specific peerID) without altering packet contents
     private func sendPacketDirected(_ packet: BitchatPacket, to peerID: String) {
         guard let data = packet.toBinaryData(padding: false) else { return }
+        notifyExternalTransports(packet: packet, data: data)
         sendOnAllLinks(packet: packet, data: data, pad: false, directedOnlyPeer: peerID)
+    }
+
+    func ingestExternalPacketData(_ data: Data, fromPeerID neighbor: String? = nil) {
+        guard let packet = BinaryProtocol.decode(data) else {
+            SecureLogger.warning("⚠️ Ignored malformed external packet from auxiliary transport", category: .session)
+            return
+        }
+        ingestExternalPacket(packet, fromPeerID: neighbor)
+    }
+
+    func ingestExternalPacket(_ packet: BitchatPacket, fromPeerID neighbor: String? = nil) {
+        let directPeerID = neighbor ?? packet.senderID.hexEncodedString()
+        let deliver: () -> Void = { [weak self] in
+            self?.handleReceivedPacket(packet, from: directPeerID)
+        }
+        if DispatchQueue.getSpecific(key: messageQueueKey) != nil {
+            deliver()
+        } else {
+            messageQueue.async(execute: deliver)
+        }
     }
 
     // MARK: - Directed store-and-forward
