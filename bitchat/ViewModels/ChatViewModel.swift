@@ -345,6 +345,9 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
     // MARK: - Services and Storage
     
     let meshService: Transport
+#if os(iOS)
+    private var wifiDirectBridge: WiFiDirectMeshBridge?
+#endif
     let identityManager: SecureIdentityStateManagerProtocol
     
     private var nostrRelayManager: NostrRelayManager?
@@ -497,7 +500,12 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
         self.keychain = keychain
         self.identityManager = identityManager
         self.meshService = BLEService(keychain: keychain, identityManager: identityManager)
-        
+#if os(iOS)
+        if let bleTransport = self.meshService as? BLEService {
+            self.wifiDirectBridge = WiFiDirectMeshBridge(meshService: bleTransport)
+        }
+#endif
+
         // Load persisted read receipts
         if let data = UserDefaults.standard.data(forKey: "sentReadReceipts"),
            let receipts = try? JSONDecoder().decode([String].self, from: data) {
@@ -545,10 +553,13 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
         
         // Set nickname before starting services
         meshService.setNickname(nickname)
-        
+
         // Start mesh service immediately
         meshService.startServices()
-        
+#if os(iOS)
+        wifiDirectBridge?.start()
+#endif
+
         // Announce Tor status (geohash-only; do not show in mesh chat). Only when auto-start is allowed.
         if TorManager.shared.torEnforced && !torStatusAnnounced && TorManager.shared.isAutoStartAllowed() {
             torStatusAnnounced = true
@@ -3006,7 +3017,10 @@ final class ChatViewModel: ObservableObject, BitchatDelegate {
     @objc func applicationWillTerminate() {
         // Send leave message to all peers
         meshService.stopServices()
-        
+#if os(iOS)
+        wifiDirectBridge?.stop()
+#endif
+
         // Force save any pending identity changes (verifications, favorites, etc)
         identityManager.forceSave()
         
